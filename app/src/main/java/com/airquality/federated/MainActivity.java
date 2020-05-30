@@ -8,6 +8,7 @@ package com.airquality.federated;
 import android.os.Environment;
 
 import androidx.appcompat.app.AppCompatActivity;
+
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -46,6 +47,9 @@ public class MainActivity extends AppCompatActivity {
     File file;
     Tensor<String> checkpointPrefix;
     String checkpointDir;
+    boolean isModelUpdate = false;
+    ArrayList<Float> weightsArray = new ArrayList<Float>();
+    ArrayList<Float> biasArray = new ArrayList<Float>();
 
     static {
         System.loadLibrary("tensorflow_inference");
@@ -56,7 +60,19 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         file = new File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "/Weights.bin");
+        if (!file.exists()) {
+            try {
+                file.createNewFile();
+            } catch (IOException e) {
+                Log.i("Error: FILE", "File not Created!");
+            }
+        }
         setContentView(R.layout.activity_main);
+        final TextView W = (TextView) findViewById(R.id.W);
+        final TextView B = (TextView) findViewById(R.id.B);
+        final Button button = (Button) findViewById(R.id.button);
+        final EditText epochs = (EditText) findViewById(R.id.epochs);
+
         InputStream inputStream;
         try {
             inputStream = getAssets().open("graph.pb");
@@ -73,101 +89,120 @@ public class MainActivity extends AppCompatActivity {
         Graph graph = new Graph();
         sess = new Session(graph);
         graph.importGraphDef(graphDef);
-//        inferenceInterface = new TensorFlowInferenceInterface;
-//        inferenceInterface.initializeTensorFlow(getAssets(), MODEL_FILE);
+        // inferenceInterface = new TensorFlowInferenceInterface;
+        // inferenceInterface.initializeTensorFlow(getAssets(), MODEL_FILE);
         sess.runner().addTarget("init").run();
+        ArrayList<Tensor<?>> values = (ArrayList<Tensor<?>>) sess.runner().fetch("W/read").fetch("b/read").run();
+        W.setText((Float.toString(values.get(0).floatValue())));
+        B.setText(Float.toString(values.get(1).floatValue()));
         Toast.makeText(getApplicationContext(), "Initialized" + sess.toString(), Toast.LENGTH_SHORT).show();
-        final TextView W = (TextView) findViewById(R.id.W);
-        final TextView B = (TextView) findViewById(R.id.B);
-        final Button button = (Button) findViewById(R.id.button);
-        final EditText epochs = (EditText) findViewById(R.id.epochs);
+
         button.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
+                if (isModelUpdate){
+                    InputStream inputStream;
+                    try {
+                        inputStream = getAssets().open("graph.pb");
+                        byte[] buffer = new byte[inputStream.available()];
+                        int bytesRead;
+                        ByteArrayOutputStream output = new ByteArrayOutputStream();
+                        while ((bytesRead = inputStream.read(buffer)) != -1) {
+                            output.write(buffer, 0, bytesRead);
+                        }
+                        graphDef = null;
+                        graphDef = output.toByteArray();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    Graph graph = new Graph();
+                    sess.close();
+                    sess = null;
+                    sess = new Session(graph);
+                    graph.importGraphDef(graphDef);
+                    // inferenceInterface = new TensorFlowInferenceInterface;
+                    // inferenceInterface.initializeTensorFlow(getAssets(), MODEL_FILE);
+                    sess.runner().addTarget("init").run();
+                    ArrayList<Tensor<?>> values = (ArrayList<Tensor<?>>) sess.runner().fetch("W/read").fetch("b/read").run();
+                    W.setText((Float.toString(values.get(0).floatValue())));
+                    B.setText(Float.toString(values.get(1).floatValue()));
+                    Toast.makeText(getApplicationContext(), "ReInitialized" + sess.toString(), Toast.LENGTH_SHORT).show();
+                }
+
                 float n_epochs = Float.parseFloat(epochs.getText().toString());
                 float num1 = (float) Math.random();
                 try (org.tensorflow.Tensor input = Tensor.create(num1);
-                     Tensor target = Tensor.create(2*num1 + 3)) {
-                    for(int epoch = 0; epoch <= n_epochs; epoch++) {
+                     Tensor target = Tensor.create(2 * num1 + 3)) {
+                    for (int epoch = 0; epoch <= n_epochs; epoch++) {
                         sess.runner().feed("input", input).feed("target", target).addTarget("train").run();
                         ArrayList<Tensor<?>> values = (ArrayList<Tensor<?>>) sess.runner().fetch("W/read").fetch("b/read").run();
                         W.setText((Float.toString(values.get(0).floatValue())));
                         B.setText(Float.toString(values.get(1).floatValue()));
+                        weightsArray.add(values.get(0).floatValue());
+                        biasArray.add(values.get(1).floatValue());
                     }
                 }
+                isModelUpdate = false;
             }
         });
         Button upload = findViewById(R.id.uploadWeights);
         upload.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                MyAsyncTask uploadWeights = new MyAsyncTask(MainActivity.this, file, "uploadWeights", new MyAsyncTask.AsyncResponse() {
-                    @Override
-                    public void processFinish(String result) {
-                        Log.i("Output: uploadWeights", result);
-                        Toast.makeText(MainActivity.this, "5 Weights Successfully Uploaded", Toast.LENGTH_SHORT).show();
+                if (weightsArray.size() > 0){
+                    finalSave();//保存文件
+                    MyAsyncTask uploadWeights = new MyAsyncTask(MainActivity.this, file, "uploadWeights", new MyAsyncTask.AsyncResponse() {
+                        @Override
+                        public void processFinish(String result) {
+                            Log.i("Output: uploadWeights", result);
+                            Toast.makeText(MainActivity.this, "Weights & bias  Successfully Uploaded", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    uploadWeights.execute();
 
+                    Toast.makeText(MainActivity.this, "Weights & bias updated", Toast.LENGTH_SHORT).show();
+                }
+                else{
+                    Toast.makeText(MainActivity.this, "New Training has not been started yet", Toast.LENGTH_SHORT).show();
+                }
 
-
-                    }
-                });
-                uploadWeights.execute();
-
-                Toast.makeText(MainActivity.this, "5 Weights updated", Toast.LENGTH_SHORT).show();
             }
         });
         Button getModel = findViewById(R.id.getModel);
         getModel.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                MyAsyncTask isGlobalModelUpdated = new MyAsyncTask(MainActivity.this, file, "ismodelUpdated", new MyAsyncTask.AsyncResponse() {
+
+                MyAsyncTask getGlobalModel = new MyAsyncTask(MainActivity.this, file, "getModel", new MyAsyncTask.AsyncResponse() {
                     @Override
                     public void processFinish(String result) {
-                        //If True, get Global Model
-                            MyAsyncTask getGlobalModel = new MyAsyncTask(MainActivity.this, file, "getModel", new MyAsyncTask.AsyncResponse() {
-                                @Override
-                                public void processFinish(String result) {
-                                    Log.i("Output: GetGlobalModel", result);
-                                }
-                            });
-                            getGlobalModel.execute();
-                            Toast.makeText(MainActivity.this, "Fetched Global Model Successfully", Toast.LENGTH_SHORT).show();
-                        Log.i("Output: isModelUpdated", "Done");
-
+                        Log.i("Output: GetGlobalModel", result);
                     }
                 });
-                isGlobalModelUpdated.execute();
+                getGlobalModel.execute();
+                Toast.makeText(MainActivity.this, "Fetched Global Model Successfully", Toast.LENGTH_SHORT).show();
+                Log.i("Output: isModelUpdated", "Done");
+                isModelUpdate = true;
             }
         });
-        //Save Weights in Private Storage
-//        finalSave();
-
-        //Upload Weights to Server
-
-        //Check if new model is available
-
-
 
     }
 
     public void finalSave() {
-        ArrayList<ArrayList<Tensor<?>>> at = getWeights();
 
         ArrayList<float[]> diff = new ArrayList<>();
-        ArrayList<ArrayList<Tensor<?>>> bt = getWeights();
-        for(int x = 0; x < 4; x++)
-        {
-            float[] d = new float[flattenedWeight(bt.get(x).get(0)).length];
-            float[] bw = flattenedWeight(bt.get(x).get(0));
-            float[] aw = flattenedWeight(at.get(x).get(0));
-
-            for(int j = 0; j < bw.length; j++)
-            {
-                d[j] = aw[j] - bw[j];
-            }
-            diff.add(d);
+        float[] weigths = new float[weightsArray.size()];
+        for(int i = 0; i < weightsArray.size(); i++){
+            weigths[i] = weightsArray.get(i);
         }
-
+        float[] bias = new float[biasArray.size()];
+        for(int i = 0; i < biasArray.size(); i++){
+            weigths[i] = biasArray.get(i);
+        }
+        diff.add(weigths);
+        diff.add(bias);
         save(diff);
+        weightsArray.clear();
+        biasArray.clear();
     }
 
     public ArrayList<ArrayList<Tensor<?>>> getWeights() {
@@ -184,18 +219,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void save(ArrayList<float[]> diff){
-
-
         int l1 = diff.get(0).length;
         int l2 = diff.get(1).length;
-        int l3 = diff.get(2).length;
-        int l4 = diff.get(3).length;
 
-        float[] result = new float[l1 + l2 + l3 + l4];
+
+        float[] result = new float[l1 + l2 ];
         System.arraycopy(diff.get(0), 0, result, 0, l1);
         System.arraycopy(diff.get(1), 0, result, l1, l2);
-        System.arraycopy(diff.get(2), 0, result, l2, l3);
-        System.arraycopy(diff.get(3), 0, result, l3, l4);
         saveWeights(result, "Weights.bin");
     }
 
@@ -221,6 +251,7 @@ public class MainActivity extends AppCompatActivity {
         // it is actually stored to the byte array
         floatBuf.put(diff);
         saveFile(byteArray, name);
+
     }
 
     public void saveFile(byte[] byteArray, String name) {
@@ -247,7 +278,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void initializeGraph() {
-        checkpointPrefix = Tensors.create((getApplicationContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath() +  "final_model.ckpt").toString());
+        checkpointPrefix = Tensors.create((getApplicationContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath() + "final_model.ckpt").toString());
         checkpointDir = getApplicationContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath();
         graph = new Graph();
         sess = new Session(graph);
@@ -268,8 +299,7 @@ public class MainActivity extends AppCompatActivity {
         try {
             sess.runner().feed("save/Const", checkpointPrefix).addTarget("save/restore_all").run();
             Toast.makeText(this, "Checkpoint Found and Loaded!", Toast.LENGTH_SHORT).show();
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             sess.runner().addTarget("init").run();
             Log.i("Checkpoint: ", "Graph Initialized");
         }
@@ -288,7 +318,8 @@ public class MainActivity extends AppCompatActivity {
         }
         return flat;
     }
-    private String train(float[][][] features, float[] label, int epochs){
+
+    private String train(float[][][] features, float[] label, int epochs) {
         org.tensorflow.Tensor x_train = Tensor.create(features);
         Tensor y_train = Tensor.create(label);
         int ctr = 0;

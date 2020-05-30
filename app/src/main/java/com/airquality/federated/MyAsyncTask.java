@@ -132,12 +132,12 @@ public class MyAsyncTask extends AsyncTask<URL, Void, String> {
 
     private String uploadWeights() throws MalformedURLException {
         URL url;
-        HttpsURLConnection conn;
+        HttpURLConnection conn;
 
-        url = new URL("https://fedserveraqi.herokuapp.com/upload");
+        url = new URL("http://152.136.48.194:18080/upload");
 
         try {
-            conn = (HttpsURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setDoOutput(true); // Allow Outputs
             uploadWeight(conn);
             conn.disconnect();
@@ -188,7 +188,7 @@ public class MyAsyncTask extends AsyncTask<URL, Void, String> {
 
         try {
             URL url = new URL("http://152.136.48.194:18080/getGlobalModel");
-            conn = (HttpsURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             InputStream is = conn.getInputStream();
 
